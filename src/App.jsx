@@ -13,7 +13,8 @@ import {
   History,
   Check,
   RefreshCw,
-  Cloud
+  Cloud,
+  Download
 } from 'lucide-react';
 
 import { storage } from './utils/storage';
