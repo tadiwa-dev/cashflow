@@ -19,6 +19,7 @@ import {
 import { storage } from './utils/storage';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import InstallPrompt from './components/InstallPrompt';
 
 const App = () => {
   // --- App State ---
