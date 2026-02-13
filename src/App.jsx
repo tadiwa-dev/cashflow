@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 
 import { storage } from './utils/storage';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const App = () => {
   // --- App State ---
@@ -178,6 +180,88 @@ const App = () => {
     }).format(val);
   };
 
+
+
+  // ... (inside the App component)
+
+  // --- Export Report ---
+  const generateReport = () => {
+    const doc = new jsPDF();
+    const date = new Date().toLocaleDateString();
+
+    // Title
+    doc.setFontSize(20);
+    doc.setTextColor(79, 70, 229); // Indigo-600
+    doc.text("FundFlow Financial Report", 14, 22);
+
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Generated on: ${date}`, 14, 28);
+
+    // Summary Section
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+    doc.text("Summary", 14, 40);
+
+    autoTable(doc, {
+      startY: 45,
+      head: [['Category', 'Amount']],
+      body: [
+        ['Total Income', formatCurrency(totalIncome)],
+        ['Total Expenses', formatCurrency(totalExpenses)],
+        ['Savings Allocated', formatCurrency(totalInContainers)],
+        ['Available Remainder', formatCurrency(availableRemainder)]
+      ],
+      theme: 'striped',
+      headStyles: { fillColor: [79, 70, 229] }
+    });
+
+    // Income Breakdown
+    let finalY = doc.lastAutoTable.finalY + 15;
+    doc.text("Income Breakdown", 14, finalY);
+
+    autoTable(doc, {
+      startY: finalY + 5,
+      head: [['Date', 'Source', 'Amount']],
+      body: incomes.length > 0
+        ? incomes.map(inc => [inc.date, inc.source, formatCurrency(inc.amount)])
+        : [['-', 'No income recorded', '-']],
+      theme: 'striped',
+      headStyles: { fillColor: [16, 185, 129] } // Emerald
+    });
+
+    // Savings Buckets
+    finalY = doc.lastAutoTable.finalY + 15;
+    doc.text("Savings Buckets", 14, finalY);
+
+    autoTable(doc, {
+      startY: finalY + 5,
+      head: [['Bucket', 'Balance']],
+      body: containers.length > 0
+        ? containers.map(con => [con.name, formatCurrency(con.balance)])
+        : [['-', 'No savings buckets', '-']],
+      theme: 'striped',
+      headStyles: { fillColor: [236, 72, 153] } // Pink
+    });
+
+    // Expenses
+    finalY = doc.lastAutoTable.finalY + 15;
+    doc.text("Expense History", 14, finalY);
+
+    autoTable(doc, {
+      startY: finalY + 5,
+      head: [['Date', 'Description', 'Amount']],
+      body: expenses.length > 0
+        ? expenses.sort((a, b) => b.createdAt - a.createdAt).map(exp => [exp.date, exp.description, `-${formatCurrency(exp.amount)}`])
+        : [['-', 'No expenses recorded', '-']],
+      theme: 'striped',
+      headStyles: { fillColor: [239, 68, 68] } // Red
+    });
+
+    // Save
+    doc.save(`fundflow-report-${date.replace(/\//g, '-')}.pdf`);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-8">
@@ -198,6 +282,7 @@ const App = () => {
                   <Check className="w-3 h-3" /> SAVED LOCALLY
                 </div>
               )}
+              <InstallPrompt />
             </div>
             <p className="text-slate-500 text-sm mt-1">Local-first financial manager</p>
           </div>
@@ -471,12 +556,20 @@ const App = () => {
 
         </div>
 
-        <footer className="text-center text-slate-400 text-sm py-8">
+        <footer className="text-center text-slate-400 text-sm py-8 space-y-4">
           <div className="flex items-center justify-center gap-2">
             <Cloud className="w-3 h-3" />
             <span>Local Storage Active</span>
           </div>
-          <p className="mt-2 font-medium">Data is saved to your browser's local storage.</p>
+          <p className="font-medium">Data is saved to your browser's local storage.</p>
+
+          <button
+            onClick={generateReport}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export Financial Report
+          </button>
         </footer>
       </div>
     </div>
