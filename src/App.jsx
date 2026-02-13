@@ -22,13 +22,13 @@ const App = () => {
   // --- App State ---
   const [isSyncing, setIsSyncing] = useState(false);
   const [data, setData] = useState({
-    income: 0,
+    incomes: [],
     containers: [],
     expenses: []
   });
 
-  // Derived state from data object for compatibility with original code structure
-  const income = data.income || 0;
+  // Derived state
+  const incomes = data.incomes || [];
   const containers = data.containers || [];
   const expenses = data.expenses || [];
 
@@ -37,6 +37,10 @@ const App = () => {
   const [expenseDesc, setExpenseDesc] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
   const [allocationAmount, setAllocationAmount] = useState({});
+
+  // Income Form States
+  const [incomeSource, setIncomeSource] = useState('');
+  const [incomeAmount, setIncomeAmount] = useState('');
 
   // --- Initialization & Listeners ---
   useEffect(() => {
@@ -52,10 +56,29 @@ const App = () => {
   }, []);
 
   // --- Writers ---
-  const saveIncome = async (val) => {
+  const addIncome = async (e) => {
+    e.preventDefault();
+    const amount = parseFloat(incomeAmount);
+    if (!incomeSource || isNaN(amount)) return;
+
     setIsSyncing(true);
     try {
-      await storage.updateProfile({ income: val });
+      await storage.addIncome({
+        source: incomeSource,
+        amount: amount,
+        date: new Date().toLocaleDateString()
+      });
+      setIncomeSource('');
+      setIncomeAmount('');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const deleteIncome = async (id) => {
+    setIsSyncing(true);
+    try {
+      await storage.deleteIncome(id);
     } finally {
       setIsSyncing(false);
     }
@@ -129,9 +152,13 @@ const App = () => {
   };
 
   // --- Calculations ---
-  const tithe = income * 0.10;
-  const offering = income * 0.10;
-  const charity = income * 0.10;
+  const totalIncome = useMemo(() =>
+    incomes.reduce((acc, curr) => acc + curr.amount, 0),
+    [incomes]);
+
+  const tithe = totalIncome * 0.10;
+  const offering = totalIncome * 0.10;
+  const charity = totalIncome * 0.10;
   const totalDeductions = tithe + offering + charity;
 
   const totalInContainers = useMemo(() =>
@@ -142,7 +169,7 @@ const App = () => {
     expenses.reduce((acc, curr) => acc + curr.amount, 0),
     [expenses]);
 
-  const availableRemainder = income - totalDeductions - totalInContainers - totalExpenses;
+  const availableRemainder = totalIncome - totalDeductions - totalInContainers - totalExpenses;
 
   const formatCurrency = (val) => {
     return new Intl.NumberFormat('en-US', {
@@ -164,7 +191,7 @@ const App = () => {
               </h1>
               {isSyncing ? (
                 <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-full animate-pulse">
-                  <RefreshCw className="w-3 h-3 animate-spin" /> SAVING
+                  <RefreshCw className="w-3 h-3" /> SAVING
                 </div>
               ) : (
                 <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100">
@@ -194,23 +221,72 @@ const App = () => {
                 <Calculator className="w-5 h-5 text-indigo-500" />
                 <h2 className="font-bold text-lg text-slate-800">Income Entry</h2>
               </div>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">$</span>
+
+              <form onSubmit={addIncome} className="space-y-3 mb-6">
                 <input
-                  type="number"
-                  value={income || ''}
-                  onChange={(e) => {
-                    const val = parseFloat(e.target.value) || 0;
-                    // Optimistic update
-                    setData(prev => ({ ...prev, income: val }));
-                    saveIncome(val);
-                  }}
-                  placeholder="Enter total income"
-                  className="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                  type="text"
+                  required
+                  placeholder="Source (e.g. Salary, Freelance)"
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                  value={incomeSource}
+                  onChange={(e) => setIncomeSource(e.target.value)}
                 />
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium">$</span>
+                    <input
+                      type="number"
+                      required
+                      placeholder="Amount"
+                      className="w-full pl-7 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      value={incomeAmount}
+                      onChange={(e) => setIncomeAmount(e.target.value)}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isSyncing}
+                    className="px-4 py-2 bg-indigo-500 text-white font-bold rounded-lg hover:bg-indigo-600 transition-colors text-sm disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                </div>
+              </form>
+
+              {/* Income List */}
+              <div className="space-y-2 mb-6 max-h-[150px] overflow-y-auto">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-100">
+                  <span>Source</span>
+                  <span>Amount</span>
+                </div>
+                {incomes.length === 0 && (
+                  <p className="text-center text-xs text-slate-400 py-2">No income logged yet.</p>
+                )}
+                {incomes.map(inc => (
+                  <div key={inc.id} className="group flex justify-between items-center py-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => deleteIncome(inc.id)}
+                        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-opacity"
+                        title="Delete income entry"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                      <span className="font-medium text-slate-700">{inc.source || 'Income'}</span>
+                    </div>
+                    <span className="font-bold text-slate-600">{formatCurrency(inc.amount)}</span>
+                  </div>
+                ))}
+
+                {incomes.length > 0 && (
+                  <div className="flex justify-between items-center pt-2 border-t border-slate-100 mt-2">
+                    <span className="text-sm font-bold text-slate-800">Total Income</span>
+                    <span className="text-sm font-bold text-indigo-600">{formatCurrency(totalIncome)}</span>
+                  </div>
+                )}
               </div>
 
-              <div className="mt-6 space-y-3">
+              <div className="space-y-3">
                 <div className="flex justify-between items-center p-3 bg-amber-50 rounded-xl border border-amber-100 text-amber-900">
                   <div className="flex items-center gap-2">
                     <Church className="w-4 h-4" />

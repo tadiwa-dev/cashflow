@@ -9,7 +9,7 @@ const getInitialData = () => {
     if (stored) return JSON.parse(stored);
 
     return {
-        income: 0,
+        incomes: [], // Changed from single income to array
         containers: [],
         expenses: []
     };
@@ -22,21 +22,51 @@ const saveData = (data) => {
     window.dispatchEvent(new Event('storage'));
 };
 
+const migrateData = (data) => {
+    // Migration: If old 'income' property exists, move it to 'incomes' array
+    if (data.income !== undefined && (!data.incomes || data.incomes.length === 0)) {
+        if (data.income > 0) {
+            data.incomes = [{
+                id: 'legacy-income',
+                source: 'Initial Income',
+                amount: data.income,
+                date: new Date().toLocaleDateString(),
+                createdAt: Date.now()
+            }];
+        }
+        delete data.income;
+        saveData(data);
+    }
+    if (!data.incomes) data.incomes = [];
+    return data;
+};
+
 export const storage = {
     // Get all data
-    getData: () => getInitialData(),
+    getData: () => migrateData(getInitialData()),
 
-    // Update profile (income)
-    updateProfile: async (updates) => {
-        const data = getInitialData();
-        // Simulate network delay
+    // Incomes
+    addIncome: async (income) => {
+        const data = migrateData(getInitialData());
         await new Promise(r => setTimeout(r, 100));
 
-        if (updates.income !== undefined) {
-            data.income = updates.income;
-        }
+        const newIncome = {
+            ...income,
+            id: Date.now().toString(),
+            createdAt: income.createdAt || Date.now()
+        };
+
+        data.incomes.push(newIncome);
         saveData(data);
-        return data;
+        return newIncome;
+    },
+
+    deleteIncome: async (id) => {
+        const data = migrateData(getInitialData());
+        await new Promise(r => setTimeout(r, 100));
+
+        data.incomes = data.incomes.filter(i => i.id !== id);
+        saveData(data);
     },
 
     // Containers
