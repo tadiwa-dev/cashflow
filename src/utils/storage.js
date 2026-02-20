@@ -5,13 +5,20 @@ const APP_KEY = 'fundflow-local-data';
 
 // Initial state structure
 const getInitialData = () => {
-    const stored = localStorage.getItem(APP_KEY);
-    if (stored) return JSON.parse(stored);
+    try {
+        const stored = localStorage.getItem(APP_KEY);
+        if (stored) return JSON.parse(stored);
+    } catch (e) {
+        console.error("Failed to load local storage:", e);
+    }
 
     return {
-        incomes: [], // Changed from single income to array
+        incomes: [],
         containers: [],
-        expenses: []
+        expenses: [],
+        clearedTithe: 0,
+        clearedOffering: 0,
+        clearedCharity: 0
     };
 };
 
@@ -38,6 +45,9 @@ const migrateData = (data) => {
         saveData(data);
     }
     if (!data.incomes) data.incomes = [];
+    if (typeof data.clearedTithe !== 'number') data.clearedTithe = 0;
+    if (typeof data.clearedOffering !== 'number') data.clearedOffering = 0;
+    if (typeof data.clearedCharity !== 'number') data.clearedCharity = 0;
     return data;
 };
 
@@ -129,16 +139,49 @@ export const storage = {
         saveData(data);
     },
 
-    // Subscriber for reacting to changes (replacing onSnapshot)
+    updateClearedDeductions: async (updates) => {
+        const data = migrateData(getInitialData());
+        await new Promise(r => setTimeout(r, 100));
+
+        if (updates.clearedTithe !== undefined) data.clearedTithe = updates.clearedTithe;
+        if (updates.clearedOffering !== undefined) data.clearedOffering = updates.clearedOffering;
+        if (updates.clearedCharity !== undefined) data.clearedCharity = updates.clearedCharity;
+
+        saveData(data);
+    },
+
+    // Subscriber for reacting to changes
     subscribe: (callback) => {
         const handler = () => {
             callback(getInitialData());
         };
 
         window.addEventListener('storage', handler);
-        // Also call immediately
         callback(getInitialData());
 
         return () => window.removeEventListener('storage', handler);
+    },
+
+    // Backup & Restore
+    exportData: () => {
+        return JSON.stringify(migrateData(getInitialData()), null, 2);
+    },
+
+    importData: async (jsonString) => {
+        try {
+            const data = JSON.parse(jsonString);
+            if (!data || typeof data !== 'object') throw new Error("Invalid data format");
+
+            // Basic validation
+            if (!Array.isArray(data.incomes)) data.incomes = [];
+            if (!Array.isArray(data.containers)) data.containers = [];
+            if (!Array.isArray(data.expenses)) data.expenses = [];
+
+            saveData(data);
+            return true;
+        } catch (e) {
+            console.error("Import failed:", e);
+            return false;
+        }
     }
 };

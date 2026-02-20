@@ -155,15 +155,40 @@ const App = () => {
     }
   };
 
+  const clearDeduction = async (type, amount) => {
+    if (amount <= 0) return;
+    setIsSyncing(true);
+    try {
+      const currentTithe = data.clearedTithe || 0;
+      const currentOffering = data.clearedOffering || 0;
+      const currentCharity = data.clearedCharity || 0;
+
+      if (type === 'tithe') {
+        await storage.updateClearedDeductions({ clearedTithe: currentTithe + amount });
+      } else if (type === 'offering') {
+        await storage.updateClearedDeductions({ clearedOffering: currentOffering + amount });
+      } else if (type === 'charity') {
+        await storage.updateClearedDeductions({ clearedCharity: currentCharity + amount });
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // --- Calculations ---
   const totalIncome = useMemo(() =>
     incomes.reduce((acc, curr) => acc + curr.amount, 0),
     [incomes]);
 
-  const tithe = totalIncome * 0.10;
-  const offering = totalIncome * 0.10;
-  const charity = totalIncome * 0.10;
-  const totalDeductions = tithe + offering + charity;
+  const totalTitheOwed = totalIncome * 0.10;
+  const totalOfferingOwed = totalIncome * 0.10;
+  const totalCharityOwed = totalIncome * 0.10;
+
+  const tithe = Math.max(0, totalTitheOwed - (data.clearedTithe || 0));
+  const offering = Math.max(0, totalOfferingOwed - (data.clearedOffering || 0));
+  const charity = Math.max(0, totalCharityOwed - (data.clearedCharity || 0));
+
+  const totalDeductions = totalTitheOwed + totalOfferingOwed + totalCharityOwed;
 
   const totalInContainers = useMemo(() =>
     containers.reduce((acc, curr) => acc + curr.balance, 0),
@@ -264,6 +289,43 @@ const App = () => {
     doc.save(`fundflow-report-${date.replace(/\//g, '-')}.pdf`);
   };
 
+
+
+
+  // --- Backup & Restore ---
+  const handleBackup = () => {
+    const json = storage.exportData();
+    const date = new Date().toLocaleDateString().replace(/\//g, '-');
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `fundflow-backup-${date}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleRestore = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const success = await storage.importData(event.target.result);
+      if (success) {
+        alert("Data restored successfully!");
+        setData(storage.getData()); // Force refresh
+      } else {
+        alert("Failed to restore data. Invalid file format.");
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    e.target.value = '';
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-8">
@@ -277,7 +339,7 @@ const App = () => {
               </h1>
               {isSyncing ? (
                 <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-full animate-pulse">
-                  <RefreshCw className="w-3 h-3" /> SAVING
+                  <RefreshCw className="w-3 h-3 animate-spin" /> SAVING
                 </div>
               ) : (
                 <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100">
@@ -379,21 +441,42 @@ const App = () => {
                     <Church className="w-4 h-4" />
                     <span className="text-sm font-medium">Tithe (10%)</span>
                   </div>
-                  <span className="font-bold">{formatCurrency(tithe)}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold">{formatCurrency(tithe)}</span>
+                    {tithe > 0 && (
+                      <button onClick={() => clearDeduction('tithe', tithe)} disabled={isSyncing} className="text-xs font-bold text-amber-600 hover:text-amber-800 underline disabled:opacity-50">
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-xl border border-emerald-100 text-emerald-900">
                   <div className="flex items-center gap-2">
                     <Coins className="w-4 h-4" />
                     <span className="text-sm font-medium">Offering (10%)</span>
                   </div>
-                  <span className="font-bold">{formatCurrency(offering)}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold">{formatCurrency(offering)}</span>
+                    {offering > 0 && (
+                      <button onClick={() => clearDeduction('offering', offering)} disabled={isSyncing} className="text-xs font-bold text-emerald-600 hover:text-emerald-800 underline disabled:opacity-50">
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex justify-between items-center p-3 bg-rose-50 rounded-xl border border-rose-100 text-rose-900">
                   <div className="flex items-center gap-2">
                     <Heart className="w-4 h-4" />
                     <span className="text-sm font-medium">Charity (10%)</span>
                   </div>
-                  <span className="font-bold">{formatCurrency(charity)}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold">{formatCurrency(charity)}</span>
+                    {charity > 0 && (
+                      <button onClick={() => clearDeduction('charity', charity)} disabled={isSyncing} className="text-xs font-bold text-rose-600 hover:text-rose-800 underline disabled:opacity-50">
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </section>
@@ -558,20 +641,53 @@ const App = () => {
 
         </div>
 
-        <footer className="text-center text-slate-400 text-sm py-8 space-y-4">
+        {/* Footer with Backup/Restore */}
+        <footer className="text-center text-slate-400 text-sm py-8 space-y-4 border-t border-slate-200 mt-12 pt-8">
           <div className="flex items-center justify-center gap-2">
             <Cloud className="w-3 h-3" />
             <span>Local Storage Active</span>
           </div>
-          <p className="font-medium">Data is saved to your browser's local storage.</p>
+          <p className="font-medium">
+            Data is saved to your browser's local storage.
+            If you clear cookies or switch devices, data will be lost unless you back it up.
+          </p>
 
-          <button
-            onClick={generateReport}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            Export Financial Report
-          </button>
+          <div className="flex flex-wrap justify-center gap-4">
+            <button
+              onClick={generateReport}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Export PDF Report
+            </button>
+
+            <button
+              onClick={handleBackup}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-200 transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Backup Data (JSON)
+            </button>
+
+            <div className="relative">
+              <input
+                type="file"
+                accept=".json"
+                onChange={handleRestore}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <button
+                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-200 transition-colors pointer-events-none"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Restore Backup
+              </button>
+            </div>
+          </div>
+
+          <div className="text-[10px] text-slate-300 max-w-md mx-auto">
+            <p>Note: Vercel Preview URLs (ending in .vercel.app) have separate storage from your main domain. Always use your production URL.</p>
+          </div>
         </footer>
       </div>
     </div>
