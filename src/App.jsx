@@ -262,6 +262,23 @@ const App = () => {
       headStyles: { fillColor: [16, 185, 129] } // Emerald
     });
 
+    // Mandatory Deductions
+    finalY = doc.lastAutoTable.finalY + 15;
+    doc.text("Mandatory Deductions", 14, finalY);
+
+    autoTable(doc, {
+      startY: finalY + 5,
+      head: [['Deduction Category', 'Total Owed (10%)', 'Total Cleared', 'Remaining Owed']],
+      body: [
+        ['Tithe', formatCurrency(totalTitheOwed), formatCurrency(data.clearedTithe || 0), formatCurrency(tithe)],
+        ['Offering', formatCurrency(totalOfferingOwed), formatCurrency(data.clearedOffering || 0), formatCurrency(offering)],
+        ['Charity', formatCurrency(totalCharityOwed), formatCurrency(data.clearedCharity || 0), formatCurrency(charity)],
+        ['Total Deductions', formatCurrency(totalDeductions), formatCurrency((data.clearedTithe || 0) + (data.clearedOffering || 0) + (data.clearedCharity || 0)), formatCurrency(tithe + offering + charity)]
+      ],
+      theme: 'striped',
+      headStyles: { fillColor: [245, 158, 11] } // Amber
+    });
+
     // Savings Buckets
     finalY = doc.lastAutoTable.finalY + 15;
     doc.text("Savings Buckets", 14, finalY);
