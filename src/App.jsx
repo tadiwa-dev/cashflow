@@ -36,6 +36,11 @@ const App = () => {
   const containers = data.containers || [];
   const expenses = data.expenses || [];
 
+  const sortedIncomes = useMemo(() =>
+    [...incomes].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+    [incomes]
+  );
+
   // Form States
   const [newContainerName, setNewContainerName] = useState('');
   const [expenseDesc, setExpenseDesc] = useState('');
@@ -250,8 +255,8 @@ const App = () => {
     autoTable(doc, {
       startY: finalY + 5,
       head: [['Date', 'Source', 'Amount']],
-      body: incomes.length > 0
-        ? incomes.map(inc => [inc.date, inc.source, formatCurrency(inc.amount)])
+      body: sortedIncomes.length > 0
+        ? sortedIncomes.map(inc => [inc.date, inc.source, formatCurrency(inc.amount)])
         : [['-', 'No income recorded', '-']],
       theme: 'striped',
       headStyles: { fillColor: [16, 185, 129] } // Emerald
@@ -408,10 +413,10 @@ const App = () => {
                   <span>Source</span>
                   <span>Amount</span>
                 </div>
-                {incomes.length === 0 && (
+                {sortedIncomes.length === 0 && (
                   <p className="text-center text-xs text-slate-400 py-2">No income logged yet.</p>
                 )}
-                {incomes.map(inc => (
+                {sortedIncomes.map(inc => (
                   <div key={inc.id} className="group flex justify-between items-center py-2 text-sm">
                     <div className="flex items-center gap-2">
                       <button
@@ -427,7 +432,7 @@ const App = () => {
                   </div>
                 ))}
 
-                {incomes.length > 0 && (
+                {sortedIncomes.length > 0 && (
                   <div className="flex justify-between items-center pt-2 border-t border-slate-100 mt-2">
                     <span className="text-sm font-bold text-slate-800">Total Income</span>
                     <span className="text-sm font-bold text-indigo-600">{formatCurrency(totalIncome)}</span>
