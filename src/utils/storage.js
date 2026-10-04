@@ -16,6 +16,7 @@ const getInitialData = () => {
         incomes: [],
         containers: [],
         expenses: [],
+        exchanges: [],
         clearedTithe: 0,
         clearedOffering: 0,
         clearedCharity: 0
@@ -45,6 +46,7 @@ const migrateData = (data) => {
         saveData(data);
     }
     if (!data.incomes) data.incomes = [];
+    if (!Array.isArray(data.exchanges)) data.exchanges = [];
     if (typeof data.clearedTithe !== 'number') data.clearedTithe = 0;
     if (typeof data.clearedOffering !== 'number') data.clearedOffering = 0;
     if (typeof data.clearedCharity !== 'number') data.clearedCharity = 0;
@@ -139,6 +141,30 @@ export const storage = {
         saveData(data);
     },
 
+    // Currency exchanges (USD <-> travel wallet). Changing money back is stored as negative amounts.
+    addExchange: async (exchange) => {
+        const data = migrateData(getInitialData());
+        await new Promise(r => setTimeout(r, 100));
+
+        const newExchange = {
+            ...exchange,
+            id: Date.now().toString(),
+            createdAt: exchange.createdAt || Date.now()
+        };
+
+        data.exchanges.push(newExchange);
+        saveData(data);
+        return newExchange;
+    },
+
+    deleteExchange: async (id) => {
+        const data = migrateData(getInitialData());
+        await new Promise(r => setTimeout(r, 100));
+
+        data.exchanges = data.exchanges.filter(x => x.id !== id);
+        saveData(data);
+    },
+
     updateClearedDeductions: async (updates) => {
         const data = migrateData(getInitialData());
         await new Promise(r => setTimeout(r, 100));
@@ -176,6 +202,7 @@ export const storage = {
             if (!Array.isArray(data.incomes)) data.incomes = [];
             if (!Array.isArray(data.containers)) data.containers = [];
             if (!Array.isArray(data.expenses)) data.expenses = [];
+            if (!Array.isArray(data.exchanges)) data.exchanges = [];
 
             saveData(data);
             return true;

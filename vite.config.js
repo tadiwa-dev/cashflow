@@ -15,7 +15,8 @@ export default defineConfig({
         name: 'FundFlow - Local Finance Tracker',
         short_name: 'FundFlow',
         description: 'Track your finances locally and securely.',
-        theme_color: '#ffffff',
+        theme_color: '#f4f1ea',
+        background_color: '#f4f1ea',
         icons: [
           {
             src: 'icons/icon.svg',

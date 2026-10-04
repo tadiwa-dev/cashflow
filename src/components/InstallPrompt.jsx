@@ -29,7 +29,7 @@ const InstallPrompt = () => {
         deferredPrompt.prompt();
 
         // Wait for the user to respond to the prompt
-        const { outcome } = await deferredPrompt.userChoice;
+        await deferredPrompt.userChoice;
 
         // We've used the prompt, and can't use it again, throw it away
         setDeferredPrompt(null);
@@ -41,10 +41,10 @@ const InstallPrompt = () => {
     return (
         <button
             onClick={handleInstallClick}
-            className="flex items-center gap-2 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors shadow-sm animate-pulse"
+            className="flex items-center gap-1.5 h-9 px-3 rounded-full bg-brand text-on-brand text-xs font-semibold active:scale-95 transition-transform"
         >
-            <Download className="w-3 h-3" />
-            Install App
+            <Download className="w-3.5 h-3.5" />
+            Install
         </button>
     );
 };

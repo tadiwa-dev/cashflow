@@ -1,1 +1,84 @@
 @import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: ui-serif, "New York", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+
+  /* Surfaces */
+  --color-canvas: #f4f1ea;
+  --color-surface: #fffefb;
+  --color-sunken: #ece8de;
+  --color-line: #e3ded2;
+
+  /* Text */
+  --color-ink: #17211d;
+  --color-muted: #66706a;
+  --color-faint: #99a09a;
+
+  /* Brand + categories */
+  --color-brand: #1f5c45;
+  --color-on-brand: #fffefb;
+  --color-give: #a8690f;
+  --color-save: #4453c7;
+  --color-spend: #bf4a35;
+  --color-travel: #14786e;
+
+  /* Hero card (dark in both themes) */
+  --color-hero: #163f31;
+  --color-hero-ink: #f4f1ea;
+  --color-give-hi: #e6b85c;
+  --color-save-hi: #a3adff;
+  --color-spend-hi: #f28d76;
+  --color-travel-hi: #6ed3c5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #0d100f;
+    --color-surface: #161a19;
+    --color-sunken: #1f2423;
+    --color-line: #272d2b;
+
+    --color-ink: #eef1ee;
+    --color-muted: #9aa39e;
+    --color-faint: #6c756f;
+
+    --color-brand: #7fd4a8;
+    --color-on-brand: #0d100f;
+    --color-give: #e6b85c;
+    --color-save: #a3adff;
+    --color-spend: #f28d76;
+    --color-travel: #6ed3c5;
+
+    --color-hero: #17382d;
+  }
+}
+
+html {
+  color-scheme: light dark;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* Amounts line up in lists */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hide native number spinners */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

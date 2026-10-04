@@ -1,20 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Wallet,
-  Church,
-  Heart,
-  Coins,
-  Plus,
-  Trash2,
-  TrendingDown,
+  House,
+  ArrowDownLeft,
   PiggyBank,
-  ArrowRight,
-  Calculator,
-  History,
+  Receipt,
+  HandHeart,
+  Church,
+  Coins,
+  Heart,
+  Plus,
+  Minus,
+  Trash2,
   Check,
-  RefreshCw,
-  Cloud,
-  Download
+  Download,
+  Upload,
+  FileText,
+  LoaderCircle,
+  ShieldCheck,
+  Plane,
+  ArrowLeftRight
 } from 'lucide-react';
 
 import { storage } from './utils/storage';
@@ -22,8 +26,121 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import InstallPrompt from './components/InstallPrompt';
 
+const TABS = [
+  { id: 'home', label: 'Overview', icon: House },
+  { id: 'income', label: 'Income', icon: ArrowDownLeft },
+  { id: 'buckets', label: 'Buckets', icon: PiggyBank },
+  { id: 'spending', label: 'Spending', icon: Receipt }
+];
+
+// Currencies a travel wallet can hold (USD is the home currency)
+const TRAVEL_CURRENCIES = [
+  { code: 'ZAR', name: 'South African rand' },
+  { code: 'EUR', name: 'Euro' },
+  { code: 'GBP', name: 'British pound' },
+  { code: 'BWP', name: 'Botswana pula' },
+  { code: 'ZMW', name: 'Zambian kwacha' },
+  { code: 'MZN', name: 'Mozambican metical' },
+  { code: 'KES', name: 'Kenyan shilling' },
+  { code: 'NGN', name: 'Nigerian naira' },
+  { code: 'AED', name: 'UAE dirham' }
+];
+
+const formatMoney = (val, currency = 'USD') =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    currencyDisplay: 'narrowSymbol'
+  }).format(val);
+
+const currencySymbol = (currency) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency, currencyDisplay: 'narrowSymbol' })
+    .formatToParts(0)
+    .find(part => part.type === 'currency').value;
+
+const fieldClass =
+  'w-full h-12 px-4 bg-sunken border border-transparent rounded-xl text-base text-ink placeholder:text-faint outline-none focus:border-brand focus:bg-surface transition-colors';
+
+const primaryButtonClass =
+  'h-12 px-5 shrink-0 rounded-xl bg-brand text-on-brand text-sm font-semibold active:scale-[.97] transition-transform disabled:opacity-50';
+
+// Two-tap button for actions that can't be undone: first tap arms, second confirms
+const ConfirmButton = ({ onConfirm, armedLabel, className, armedClassName, disabled, children, ...rest }) => {
+  const [armed, setArmed] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(timer);
+  }, [armed]);
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => {
+        if (armed) {
+          setArmed(false);
+          onConfirm();
+        } else {
+          setArmed(true);
+        }
+      }}
+      onBlur={() => setArmed(false)}
+      className={armed ? armedClassName : className}
+      {...rest}
+    >
+      {armed ? armedLabel : children}
+    </button>
+  );
+};
+
+const DeleteButton = ({ onConfirm, label }) => (
+  <ConfirmButton
+    onConfirm={onConfirm}
+    aria-label={label}
+    armedLabel="Delete?"
+    className="h-10 w-10 shrink-0 grid place-items-center rounded-full text-faint hover:text-spend active:bg-sunken transition-colors"
+    armedClassName="h-8 px-3 shrink-0 rounded-full bg-spend text-canvas text-xs font-semibold"
+  >
+    <Trash2 className="w-4 h-4" />
+  </ConfirmButton>
+);
+
+const SectionHeader = ({ icon: Icon, tone, title, children }) => (
+  <div className="flex items-center justify-between gap-3 mb-5">
+    <div className="flex items-center gap-3 min-w-0">
+      <span className={`h-9 w-9 shrink-0 grid place-items-center rounded-full ${tone}`}>
+        <Icon className="w-[18px] h-[18px]" />
+      </span>
+      <h2 className="font-display text-xl text-ink truncate">{title}</h2>
+    </div>
+    {children}
+  </div>
+);
+
+const MoneyInput = ({ className = '', symbol = '$', ...props }) => (
+  <div className={`relative flex-1 min-w-0 ${className}`}>
+    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-faint pointer-events-none">{symbol}</span>
+    <input
+      type="number"
+      inputMode="decimal"
+      step="any"
+      placeholder="0.00"
+      className={`${fieldClass} ${symbol.length > 1 ? 'pl-14' : 'pl-8'} tnum`}
+      {...props}
+    />
+  </div>
+);
+
+const EmptyState = ({ children }) => (
+  <p className="text-center text-sm text-faint py-8">{children}</p>
+);
+
 const App = () => {
   // --- App State ---
+  const [tab, setTab] = useState('home');
+  const [toast, setToast] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [data, setData] = useState({
     incomes: [],
@@ -35,10 +152,16 @@ const App = () => {
   const incomes = data.incomes || [];
   const containers = data.containers || [];
   const expenses = data.expenses || [];
+  const exchanges = data.exchanges || [];
 
   const sortedIncomes = useMemo(() =>
     [...incomes].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
     [incomes]
+  );
+
+  const sortedExpenses = useMemo(() =>
+    [...expenses].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+    [expenses]
   );
 
   // Form States
@@ -46,6 +169,14 @@ const App = () => {
   const [expenseDesc, setExpenseDesc] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
   const [allocationAmount, setAllocationAmount] = useState({});
+
+  const [expenseCurrency, setExpenseCurrency] = useState('USD');
+
+  // Exchange Form States
+  const [exchangeMode, setExchangeMode] = useState('buy');
+  const [exchangeCurrency, setExchangeCurrency] = useState('ZAR');
+  const [exchangeUsd, setExchangeUsd] = useState('');
+  const [exchangeForeign, setExchangeForeign] = useState('');
 
   // Income Form States
   const [incomeSource, setIncomeSource] = useState('');
@@ -116,8 +247,8 @@ const App = () => {
     }
   };
 
-  const updateContainerBalance = async (id, amount) => {
-    const numAmount = parseFloat(amount);
+  const updateContainerBalance = async (id, amount, direction = 1) => {
+    const numAmount = parseFloat(amount) * direction;
     if (isNaN(numAmount)) return;
 
     setIsSyncing(true);
@@ -142,7 +273,9 @@ const App = () => {
       await storage.addExpense({
         description: expenseDesc,
         amount: amount,
-        date: new Date().toLocaleDateString()
+        date: new Date().toLocaleDateString(),
+        // Expenses without a currency are USD
+        ...(activeExpenseCurrency !== 'USD' && { currency: activeExpenseCurrency })
       });
       setExpenseDesc('');
       setExpenseAmount('');
@@ -155,6 +288,40 @@ const App = () => {
     setIsSyncing(true);
     try {
       await storage.deleteExpense(id);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const addExchange = async (e) => {
+    e.preventDefault();
+    const usd = parseFloat(exchangeUsd);
+    const foreign = parseFloat(exchangeForeign);
+    if (isNaN(usd) || isNaN(foreign) || usd <= 0 || foreign <= 0) return;
+
+    // Changing money back to USD reverses the flow
+    const direction = exchangeMode === 'buy' ? 1 : -1;
+
+    setIsSyncing(true);
+    try {
+      await storage.addExchange({
+        currency: exchangeCurrency,
+        usdAmount: usd * direction,
+        foreignAmount: foreign * direction,
+        date: new Date().toLocaleDateString()
+      });
+      setExchangeUsd('');
+      setExchangeForeign('');
+      setExchangeMode('buy');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const deleteExchange = async (id) => {
+    setIsSyncing(true);
+    try {
+      await storage.deleteExchange(id);
     } finally {
       setIsSyncing(false);
     }
@@ -199,11 +366,54 @@ const App = () => {
     containers.reduce((acc, curr) => acc + curr.balance, 0),
     [containers]);
 
+  const isForeign = (expense) => expense.currency && expense.currency !== 'USD';
+
+  // Only USD expenses come out of the USD remainder; travel spending comes out of its wallet
   const totalExpenses = useMemo(() =>
-    expenses.reduce((acc, curr) => acc + curr.amount, 0),
+    expenses.reduce((acc, curr) => isForeign(curr) ? acc : acc + curr.amount, 0),
     [expenses]);
 
-  const availableRemainder = totalIncome - totalDeductions - totalInContainers - totalExpenses;
+  // One travel wallet per currency, derived from exchanges and spending in that currency
+  const wallets = useMemo(() => {
+    const byCurrency = {};
+    const walletFor = (currency) => (byCurrency[currency] ||= {
+      currency, bought: 0, paidUsd: 0, netForeign: 0, netUsd: 0, spent: 0, exchanges: []
+    });
+
+    exchanges.forEach(ex => {
+      const wallet = walletFor(ex.currency);
+      if (ex.foreignAmount > 0) {
+        wallet.bought += ex.foreignAmount;
+        wallet.paidUsd += ex.usdAmount;
+      }
+      wallet.netForeign += ex.foreignAmount;
+      wallet.netUsd += ex.usdAmount;
+      wallet.exchanges.push(ex);
+    });
+    expenses.filter(isForeign).forEach(exp => {
+      walletFor(exp.currency).spent += exp.amount;
+    });
+
+    return Object.values(byCurrency).map(wallet => ({
+      ...wallet,
+      exchanges: wallet.exchanges.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+      balance: wallet.netForeign - wallet.spent,
+      // Units of foreign currency per $1, averaged over everything bought
+      rate: wallet.paidUsd > 0 ? wallet.bought / wallet.paidUsd : 0
+    }));
+  }, [exchanges, expenses]);
+
+  const totalExchanged = wallets.reduce((acc, wallet) => acc + wallet.netUsd, 0);
+
+  const toUsd = (amount, currency) => {
+    const rate = wallets.find(w => w.currency === currency)?.rate;
+    return rate ? amount / rate : null;
+  };
+
+  const expenseCurrencies = ['USD', ...wallets.map(w => w.currency)];
+  const activeExpenseCurrency = expenseCurrencies.includes(expenseCurrency) ? expenseCurrency : 'USD';
+
+  const availableRemainder = totalIncome - totalDeductions - totalInContainers - totalExpenses - totalExchanged;
 
   const formatCurrency = (val) => {
     return new Intl.NumberFormat('en-US', {
@@ -211,10 +421,6 @@ const App = () => {
       currency: 'USD',
     }).format(val);
   };
-
-
-
-  // ... (inside the App component)
 
   // --- Export Report ---
   const generateReport = () => {
@@ -242,6 +448,7 @@ const App = () => {
         ['Total Income', formatCurrency(totalIncome)],
         ['Total Expenses', formatCurrency(totalExpenses)],
         ['Savings Allocated', formatCurrency(totalInContainers)],
+        ...(wallets.length > 0 ? [['Exchanged to Travel Money', formatCurrency(totalExchanged)]] : []),
         ['Available Remainder', formatCurrency(availableRemainder)]
       ],
       theme: 'striped',
@@ -288,10 +495,30 @@ const App = () => {
       head: [['Bucket', 'Balance']],
       body: containers.length > 0
         ? containers.map(con => [con.name, formatCurrency(con.balance)])
-        : [['-', 'No savings buckets', '-']],
+        : [['No savings buckets', '-']],
       theme: 'striped',
       headStyles: { fillColor: [236, 72, 153] } // Pink
     });
+
+    // Travel Money
+    if (wallets.length > 0) {
+      finalY = doc.lastAutoTable.finalY + 15;
+      doc.text("Travel Money", 14, finalY);
+
+      autoTable(doc, {
+        startY: finalY + 5,
+        head: [['Currency', 'USD Exchanged', 'Received', 'Spent', 'Balance']],
+        body: wallets.map(w => [
+          w.currency,
+          formatCurrency(w.netUsd),
+          formatMoney(w.netForeign, w.currency),
+          formatMoney(w.spent, w.currency),
+          formatMoney(w.balance, w.currency)
+        ]),
+        theme: 'striped',
+        headStyles: { fillColor: [20, 120, 110] } // Teal
+      });
+    }
 
     // Expenses
     finalY = doc.lastAutoTable.finalY + 15;
@@ -301,7 +528,7 @@ const App = () => {
       startY: finalY + 5,
       head: [['Date', 'Description', 'Amount']],
       body: expenses.length > 0
-        ? expenses.sort((a, b) => b.createdAt - a.createdAt).map(exp => [exp.date, exp.description, `-${formatCurrency(exp.amount)}`])
+        ? sortedExpenses.map(exp => [exp.date, exp.description, `-${formatMoney(exp.amount, exp.currency || 'USD')}`])
         : [['-', 'No expenses recorded', '-']],
       theme: 'striped',
       headStyles: { fillColor: [239, 68, 68] } // Red
@@ -310,9 +537,6 @@ const App = () => {
     // Save
     doc.save(`fundflow-report-${date.replace(/\//g, '-')}.pdf`);
   };
-
-
-
 
   // --- Backup & Restore ---
   const handleBackup = () => {
@@ -332,15 +556,19 @@ const App = () => {
   const handleRestore = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (!window.confirm('Replace everything currently in FundFlow with this backup?')) {
+      e.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = async (event) => {
       const success = await storage.importData(event.target.result);
       if (success) {
-        alert("Data restored successfully!");
+        setToast('Backup restored');
         setData(storage.getData()); // Force refresh
       } else {
-        alert("Failed to restore data. Invalid file format.");
+        setToast("Couldn't restore — that file isn't a FundFlow backup");
       }
     };
     reader.readAsText(file);
@@ -348,370 +576,587 @@ const App = () => {
     e.target.value = '';
   };
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-4 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-8">
+  // --- View helpers ---
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(''), 3500);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
-        {/* Header Section */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                FundFlow
-              </h1>
+  // On phones only the active tab's sections show; on large screens everything does
+  const showOn = (...tabs) => (tabs.includes(tab) ? '' : 'hidden lg:block');
+
+  const [remainderWhole, remainderCents] = formatCurrency(availableRemainder).split('.');
+  const isOverspent = availableRemainder < 0;
+
+  const allocationBase = Math.max(
+    totalIncome,
+    totalDeductions + Math.max(0, totalInContainers) + totalExpenses + Math.max(0, totalExchanged)
+  );
+  const share = (value) => (allocationBase > 0 ? (Math.max(0, value) / allocationBase) * 100 : 0);
+
+  const allocation = [
+    { key: 'giving', label: 'Giving', value: totalDeductions, bar: 'bg-give-hi' },
+    { key: 'saved', label: 'Saved', value: totalInContainers, bar: 'bg-save-hi' },
+    { key: 'spent', label: 'Spent', value: totalExpenses, bar: 'bg-spend-hi' },
+    ...(wallets.length > 0
+      ? [{ key: 'travel', label: 'Travel', value: totalExchanged, bar: 'bg-travel-hi' }]
+      : [])
+  ];
+
+  const giving = [
+    { key: 'tithe', label: 'Tithe', icon: Church, owed: tithe, total: totalTitheOwed, cleared: data.clearedTithe || 0 },
+    { key: 'offering', label: 'Offering', icon: Coins, owed: offering, total: totalOfferingOwed, cleared: data.clearedOffering || 0 },
+    { key: 'charity', label: 'Charity', icon: Heart, owed: charity, total: totalCharityOwed, cleared: data.clearedCharity || 0 }
+  ];
+
+  const cardClass = 'bg-surface border border-line rounded-3xl p-5 lg:p-6';
+
+  return (
+    <div className="min-h-screen bg-canvas text-ink font-sans">
+
+      {/* App bar */}
+      <header className="sticky top-0 z-20 bg-canvas/85 backdrop-blur-md pt-[env(safe-area-inset-top)]">
+        <div className="max-w-6xl mx-auto h-14 px-4 lg:px-8 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <h1 className="font-display text-2xl tracking-tight text-ink">FundFlow</h1>
+            <span
+              className="flex items-center gap-1.5 text-[11px] font-medium text-muted whitespace-nowrap"
+              aria-live="polite"
+            >
               {isSyncing ? (
-                <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-full animate-pulse">
-                  <RefreshCw className="w-3 h-3 animate-spin" /> SAVING
-                </div>
+                <>
+                  <LoaderCircle className="w-3 h-3 animate-spin" /> Saving…
+                </>
               ) : (
-                <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100">
-                  <Check className="w-3 h-3" /> SAVED LOCALLY
-                </div>
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand" /> Saved locally
+                </>
               )}
-              <InstallPrompt />
-            </div>
-            <p className="text-slate-500 text-sm mt-1">Local-first financial manager</p>
+            </span>
           </div>
-          <div className="flex items-center gap-3 bg-blue-50 px-4 py-3 rounded-xl border border-blue-100">
-            <Wallet className="text-blue-600 w-6 h-6" />
-            <div>
-              <p className="text-xs font-semibold text-blue-400 uppercase tracking-wider">Available Remainder</p>
-              <p className={`text-xl font-bold ${availableRemainder < 0 ? 'text-red-600' : 'text-slate-800'}`}>
-                {formatCurrency(availableRemainder)}
+          <div className="flex items-center gap-2">
+            {tab !== 'home' && (
+              <button
+                onClick={() => setTab('home')}
+                className="lg:hidden h-9 px-3 rounded-full bg-surface border border-line text-sm font-semibold tnum"
+                aria-label="Available remainder, go to overview"
+              >
+                <span className={isOverspent ? 'text-spend' : 'text-ink'}>
+                  {formatCurrency(availableRemainder)}
+                </span>
+              </button>
+            )}
+            <InstallPrompt />
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4 lg:px-8 pt-2 pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-12 space-y-4 lg:space-y-6">
+
+        {/* Hero: available remainder */}
+        <section className={`${showOn('home')} bg-hero text-hero-ink rounded-[28px] p-6 lg:p-8`}>
+          <div className="lg:flex lg:items-end lg:justify-between lg:gap-12">
+            <div className="shrink-0">
+              <p className="text-xs font-medium uppercase tracking-[0.14em] text-hero-ink/60">
+                Available to spend
+              </p>
+              <p className={`font-display tnum mt-2 leading-none ${isOverspent ? 'text-spend-hi' : ''}`}>
+                <span className="text-[44px] lg:text-6xl tracking-tight">{remainderWhole}</span>
+                <span className="text-2xl lg:text-3xl text-hero-ink/60">.{remainderCents}</span>
+              </p>
+              <p className="text-sm text-hero-ink/60 mt-3">
+                {totalIncome > 0
+                  ? isOverspent
+                    ? `Over by ${formatCurrency(Math.abs(availableRemainder))} of ${formatCurrency(totalIncome)} income`
+                    : `of ${formatCurrency(totalIncome)} income`
+                  : 'Add your first income to get started'}
               </p>
             </div>
-          </div>
-        </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-          {/* Column 1: Income & Mandatory Deductions */}
-          <div className="space-y-6">
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-              <div className="flex items-center gap-2 mb-4">
-                <Calculator className="w-5 h-5 text-indigo-500" />
-                <h2 className="font-bold text-lg text-slate-800">Income Entry</h2>
+            <div className="mt-6 lg:mt-0 lg:flex-1 lg:max-w-xl">
+              {/* Where the money went */}
+              <div
+                className="flex h-2.5 rounded-full overflow-hidden bg-hero-ink/15 gap-[2px]"
+                role="img"
+                aria-label={allocation.map(a => `${a.label} ${formatCurrency(a.value)}`).join(', ')}
+              >
+                {allocation.map(a => share(a.value) > 0 && (
+                  <div key={a.key} className={`${a.bar} h-full`} style={{ width: `${share(a.value)}%` }} />
+                ))}
               </div>
+              <dl className={`grid gap-x-3 gap-y-4 mt-4 ${allocation.length > 3 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+                {allocation.map(a => (
+                  <div key={a.key}>
+                    <dt className="flex items-center gap-1.5 text-xs text-hero-ink/60">
+                      <span className={`w-2 h-2 rounded-full ${a.bar}`} />
+                      {a.label}
+                    </dt>
+                    <dd className="text-[15px] font-semibold tnum mt-1">{formatCurrency(a.value)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          </div>
 
-              <form onSubmit={addIncome} className="space-y-3 mb-6">
+          {wallets.length > 0 && (
+            <div className="mt-6 pt-4 border-t border-hero-ink/15 space-y-3">
+              {wallets.map(wallet => (
+                <button
+                  key={wallet.currency}
+                  onClick={() => setTab('buckets')}
+                  className="w-full flex items-center justify-between gap-3 text-left lg:cursor-default"
+                >
+                  <span className="flex items-center gap-2 text-sm text-hero-ink/60">
+                    <Plane className="w-4 h-4 text-travel-hi" />
+                    {wallet.currency} wallet
+                  </span>
+                  <span className="text-right tnum">
+                    <span className={`text-[15px] font-semibold ${wallet.balance < 0 ? 'text-spend-hi' : ''}`}>
+                      {formatMoney(wallet.balance, wallet.currency)} left
+                    </span>
+                    {wallet.rate > 0 && (
+                      <span className="text-xs text-hero-ink/60 ml-2">
+                        ≈ {formatCurrency(wallet.balance / wallet.rate)}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6 items-start">
+
+          {/* Column 1: Income & Giving */}
+          <div className={`${showOn('home', 'income')} space-y-4 lg:space-y-6`}>
+            <section className={`${showOn('income')} ${cardClass}`}>
+              <SectionHeader icon={ArrowDownLeft} tone="bg-brand/10 text-brand" title="Income">
+                {sortedIncomes.length > 0 && (
+                  <span className="text-sm font-semibold text-brand tnum">{formatCurrency(totalIncome)}</span>
+                )}
+              </SectionHeader>
+
+              <form onSubmit={addIncome} className="space-y-2 mb-6">
                 <input
                   type="text"
                   required
                   placeholder="Source (e.g. Salary, Freelance)"
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                  aria-label="Income source"
+                  className={fieldClass}
                   value={incomeSource}
                   onChange={(e) => setIncomeSource(e.target.value)}
                 />
                 <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium">$</span>
-                    <input
-                      type="number"
-                      required
-                      placeholder="Amount"
-                      className="w-full pl-7 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
-                      value={incomeAmount}
-                      onChange={(e) => setIncomeAmount(e.target.value)}
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={isSyncing}
-                    className="px-4 py-2 bg-indigo-500 text-white font-bold rounded-lg hover:bg-indigo-600 transition-colors text-sm disabled:opacity-50"
-                  >
+                  <MoneyInput
+                    required
+                    aria-label="Income amount"
+                    value={incomeAmount}
+                    onChange={(e) => setIncomeAmount(e.target.value)}
+                  />
+                  <button type="submit" disabled={isSyncing} className={primaryButtonClass}>
                     Add
                   </button>
                 </div>
               </form>
 
-              {/* Income List */}
-              <div className="space-y-2 mb-6 max-h-[150px] overflow-y-auto">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-100">
-                  <span>Source</span>
-                  <span>Amount</span>
-                </div>
-                {sortedIncomes.length === 0 && (
-                  <p className="text-center text-xs text-slate-400 py-2">No income logged yet.</p>
-                )}
-                {sortedIncomes.map(inc => (
-                  <div key={inc.id} className="group flex justify-between items-center py-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => deleteIncome(inc.id)}
-                        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-opacity"
-                        title="Delete income entry"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                      <span className="font-medium text-slate-700">{inc.source || 'Income'}</span>
-                    </div>
-                    <span className="font-bold text-slate-600">{formatCurrency(inc.amount)}</span>
-                  </div>
-                ))}
-
-                {sortedIncomes.length > 0 && (
-                  <div className="flex justify-between items-center pt-2 border-t border-slate-100 mt-2">
-                    <span className="text-sm font-bold text-slate-800">Total Income</span>
-                    <span className="text-sm font-bold text-indigo-600">{formatCurrency(totalIncome)}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex justify-between items-center p-3 bg-amber-50 rounded-xl border border-amber-100 text-amber-900">
-                  <div className="flex items-center gap-2">
-                    <Church className="w-4 h-4" />
-                    <span className="text-sm font-medium">Tithe (10%)</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-bold">{formatCurrency(tithe)}</span>
-                    {tithe > 0 && (
-                      <button onClick={() => clearDeduction('tithe', tithe)} disabled={isSyncing} className="text-xs font-bold text-amber-600 hover:text-amber-800 underline disabled:opacity-50">
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-xl border border-emerald-100 text-emerald-900">
-                  <div className="flex items-center gap-2">
-                    <Coins className="w-4 h-4" />
-                    <span className="text-sm font-medium">Offering (10%)</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-bold">{formatCurrency(offering)}</span>
-                    {offering > 0 && (
-                      <button onClick={() => clearDeduction('offering', offering)} disabled={isSyncing} className="text-xs font-bold text-emerald-600 hover:text-emerald-800 underline disabled:opacity-50">
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="flex justify-between items-center p-3 bg-rose-50 rounded-xl border border-rose-100 text-rose-900">
-                  <div className="flex items-center gap-2">
-                    <Heart className="w-4 h-4" />
-                    <span className="text-sm font-medium">Charity (10%)</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-bold">{formatCurrency(charity)}</span>
-                    {charity > 0 && (
-                      <button onClick={() => clearDeduction('charity', charity)} disabled={isSyncing} className="text-xs font-bold text-rose-600 hover:text-rose-800 underline disabled:opacity-50">
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
+              {sortedIncomes.length === 0 ? (
+                <EmptyState>No income logged yet.</EmptyState>
+              ) : (
+                <ul className="divide-y divide-line lg:max-h-[320px] lg:overflow-y-auto overflow-x-hidden pr-2">
+                  {sortedIncomes.map(inc => (
+                    <li key={inc.id} className="flex items-center justify-between gap-3 py-3">
+                      <div className="min-w-0">
+                        <p className="text-[15px] font-medium text-ink truncate">{inc.source || 'Income'}</p>
+                        <p className="text-xs text-faint mt-0.5">{inc.date}</p>
+                      </div>
+                      <div className="flex items-center gap-1 -mr-2">
+                        <span className="text-[15px] font-semibold text-ink tnum">{formatCurrency(inc.amount)}</span>
+                        <DeleteButton onConfirm={() => deleteIncome(inc.id)} label={`Delete income ${inc.source || ''}`} />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
 
-            {/* Quick Stats */}
-            <section className="bg-indigo-600 p-6 rounded-2xl shadow-lg text-white">
-              <h3 className="text-indigo-100 text-sm font-semibold uppercase tracking-wider mb-4">Breakdown Summary</h3>
-              <div className="space-y-4">
-                <div className="flex justify-between items-end border-b border-indigo-500/50 pb-2">
-                  <span className="text-sm">Mandatory Deductions</span>
-                  <span className="font-semibold text-lg">{formatCurrency(totalDeductions)}</span>
-                </div>
-                <div className="flex justify-between items-end border-b border-indigo-500/50 pb-2">
-                  <span className="text-sm">Total Savings Allocated</span>
-                  <span className="font-semibold text-lg">{formatCurrency(totalInContainers)}</span>
-                </div>
-                <div className="flex justify-between items-end border-b border-indigo-500/50 pb-2">
-                  <span className="text-sm">Total Expenses</span>
-                  <span className="font-semibold text-lg">{formatCurrency(totalExpenses)}</span>
-                </div>
-              </div>
+            <section className={`${showOn('home')} ${cardClass}`}>
+              <SectionHeader icon={HandHeart} tone="bg-give/10 text-give" title="Giving">
+                <span className="text-xs text-muted">10% each</span>
+              </SectionHeader>
+
+              <ul className="space-y-5">
+                {giving.map(({ key, label, icon: Icon, owed, total, cleared }) => (
+                  <li key={key}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Icon className="w-[18px] h-[18px] text-give shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-[15px] font-medium text-ink">{label}</p>
+                          <p className="text-xs text-faint mt-0.5 tnum truncate">
+                            {formatCurrency(Math.min(cleared, total))} paid
+                          </p>
+                        </div>
+                      </div>
+                      {owed > 0 ? (
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="text-[15px] font-semibold text-ink tnum">{formatCurrency(owed)}</span>
+                          <ConfirmButton
+                            onConfirm={() => clearDeduction(key, owed)}
+                            disabled={isSyncing}
+                            armedLabel="Confirm"
+                            className="h-9 px-3 rounded-full border border-give/40 text-give text-xs font-semibold active:bg-give/10 disabled:opacity-50"
+                            armedClassName="h-9 px-3 rounded-full bg-give text-canvas text-xs font-semibold"
+                          >
+                            Mark paid
+                          </ConfirmButton>
+                        </div>
+                      ) : total > 0 ? (
+                        <span className="flex items-center gap-1 text-xs font-semibold text-brand shrink-0">
+                          <Check className="w-3.5 h-3.5" /> Paid
+                        </span>
+                      ) : (
+                        <span className="text-[15px] text-faint tnum shrink-0">{formatCurrency(0)}</span>
+                      )}
+                    </div>
+                    <div className="h-1 rounded-full bg-sunken mt-3 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-give transition-[width] duration-500"
+                        style={{ width: `${total > 0 ? Math.min(100, (cleared / total) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
             </section>
           </div>
 
-          {/* Column 2: Savings Containers */}
-          <div className="lg:col-span-1 space-y-6">
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full flex flex-col">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2">
-                  <PiggyBank className="w-5 h-5 text-pink-500" />
-                  <h2 className="font-bold text-lg text-slate-800">Savings Buckets</h2>
-                </div>
-              </div>
+          {/* Column 2: Savings Buckets */}
+          <div className={`${showOn('buckets')} space-y-4 lg:space-y-6`}>
+          <section className={cardClass}>
+            <SectionHeader icon={PiggyBank} tone="bg-save/10 text-save" title="Buckets">
+              {containers.length > 0 && (
+                <span className="text-sm font-semibold text-save tnum">{formatCurrency(totalInContainers)}</span>
+              )}
+            </SectionHeader>
 
-              <div className="flex gap-2 mb-6">
-                <input
-                  type="text"
-                  value={newContainerName}
-                  onChange={(e) => setNewContainerName(e.target.value)}
-                  placeholder="Bucket name (e.g. Car)"
-                  className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-pink-500 outline-none text-sm"
-                />
-                <button
-                  onClick={addContainer}
-                  disabled={isSyncing}
-                  className="p-2 bg-pink-500 text-white rounded-lg hover:bg-pink-600 transition-colors disabled:opacity-50"
-                >
-                  <Plus className="w-5 h-5" />
-                </button>
-              </div>
+            <form
+              onSubmit={(e) => { e.preventDefault(); addContainer(); }}
+              className="flex gap-2 mb-6"
+            >
+              <input
+                type="text"
+                value={newContainerName}
+                onChange={(e) => setNewContainerName(e.target.value)}
+                placeholder="New bucket (e.g. Car)"
+                aria-label="New bucket name"
+                className={fieldClass}
+              />
+              <button
+                type="submit"
+                disabled={isSyncing}
+                aria-label="Create bucket"
+                className="h-12 w-12 shrink-0 grid place-items-center rounded-xl bg-save text-canvas active:scale-[.97] transition-transform disabled:opacity-50"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            </form>
 
-              <div className="space-y-4 flex-1 overflow-y-auto max-h-[500px] pr-2">
-                {containers.length === 0 && (
-                  <div className="text-center py-8 text-slate-400">
-                    <p className="text-sm">No containers created yet.</p>
-                  </div>
-                )}
+            {containers.length === 0 ? (
+              <EmptyState>No buckets yet. Create one to start setting money aside.</EmptyState>
+            ) : (
+              <ul className="space-y-3 lg:max-h-[560px] lg:overflow-y-auto">
                 {containers.map(container => (
-                  <div key={container.id} className="p-4 rounded-xl border border-slate-100 bg-slate-50/50">
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <h4 className="font-bold text-slate-700">{container.name}</h4>
-                        <p className="text-lg font-black text-pink-600">{formatCurrency(container.balance)}</p>
+                  <li key={container.id} className="p-4 rounded-2xl bg-canvas border border-line">
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-medium text-muted truncate">{container.name}</h3>
+                        <p className="font-display text-[28px] leading-tight text-ink tnum mt-0.5">
+                          {formatCurrency(container.balance)}
+                        </p>
                       </div>
-                      <button
-                        onClick={() => deleteContainer(container.id)}
-                        className="text-slate-300 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <DeleteButton onConfirm={() => deleteContainer(container.id)} label={`Delete bucket ${container.name}`} />
                     </div>
-                    <div className="flex gap-2">
-                      <input
-                        type="number"
-                        placeholder="Amount"
-                        className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-200 focus:ring-1 focus:ring-pink-400 outline-none"
+                    <div className="flex gap-2 mt-3">
+                      <MoneyInput
+                        aria-label={`Amount for ${container.name}`}
                         value={allocationAmount[container.id] || ''}
                         onChange={(e) => setAllocationAmount({ ...allocationAmount, [container.id]: e.target.value })}
                       />
                       <button
+                        onClick={() => updateContainerBalance(container.id, allocationAmount[container.id], -1)}
+                        disabled={isSyncing}
+                        aria-label={`Take out of ${container.name}`}
+                        className="h-12 w-12 shrink-0 grid place-items-center rounded-xl border border-line bg-surface text-ink active:scale-[.97] transition-transform disabled:opacity-50"
+                      >
+                        <Minus className="w-5 h-5" />
+                      </button>
+                      <button
                         onClick={() => updateContainerBalance(container.id, allocationAmount[container.id])}
                         disabled={isSyncing}
-                        className="px-3 py-1.5 bg-slate-800 text-white text-xs font-bold rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-1 disabled:opacity-50"
+                        aria-label={`Add to ${container.name}`}
+                        className="h-12 w-12 shrink-0 grid place-items-center rounded-xl bg-ink text-canvas active:scale-[.97] transition-transform disabled:opacity-50"
                       >
-                        Add <ArrowRight className="w-3 h-3" />
+                        <Plus className="w-5 h-5" />
                       </button>
                     </div>
-                  </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* Travel money: USD exchanged into a foreign-currency wallet */}
+          <section className={cardClass}>
+            <SectionHeader icon={Plane} tone="bg-travel/10 text-travel" title="Travel money">
+              {wallets.length > 0 && (
+                <span className="text-sm font-semibold text-travel tnum">{formatCurrency(totalExchanged)}</span>
+              )}
+            </SectionHeader>
+
+            <form onSubmit={addExchange} className="space-y-2 mb-6">
+              <div className="flex p-1 rounded-xl bg-sunken" role="group" aria-label="Exchange direction">
+                {[['buy', 'Exchange USD'], ['back', 'Change back']].map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setExchangeMode(mode)}
+                    aria-pressed={exchangeMode === mode}
+                    className={`flex-1 h-9 rounded-lg text-sm font-semibold transition-colors ${exchangeMode === mode ? 'bg-surface text-ink shadow-sm' : 'text-muted'}`}
+                  >
+                    {label}
+                  </button>
                 ))}
               </div>
-            </section>
+
+              <select
+                value={exchangeCurrency}
+                onChange={(e) => setExchangeCurrency(e.target.value)}
+                aria-label="Travel currency"
+                className={fieldClass}
+              >
+                {TRAVEL_CURRENCIES.map(({ code, name }) => (
+                  <option key={code} value={code}>{code} · {name}</option>
+                ))}
+              </select>
+
+              <div className={`flex gap-2 ${exchangeMode === 'back' ? 'flex-row-reverse' : ''}`}>
+                <label className="flex-1 min-w-0">
+                  <span className="block text-xs text-muted mb-1 ml-1">
+                    {exchangeMode === 'buy' ? 'You gave' : 'You got'}
+                  </span>
+                  <MoneyInput
+                    required
+                    value={exchangeUsd}
+                    onChange={(e) => setExchangeUsd(e.target.value)}
+                  />
+                </label>
+                <label className="flex-1 min-w-0">
+                  <span className="block text-xs text-muted mb-1 ml-1">
+                    {exchangeMode === 'buy' ? 'You got' : 'You gave'}
+                  </span>
+                  <MoneyInput
+                    required
+                    symbol={currencySymbol(exchangeCurrency)}
+                    value={exchangeForeign}
+                    onChange={(e) => setExchangeForeign(e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <button type="submit" disabled={isSyncing} className={`${primaryButtonClass} w-full flex items-center justify-center gap-2`}>
+                <ArrowLeftRight className="w-4 h-4" />
+                {exchangeMode === 'buy' ? 'Record exchange' : 'Record change back'}
+              </button>
+            </form>
+
+            {wallets.length === 0 ? (
+              <EmptyState>Changed money for a trip? Record it here, then log spending from that wallet.</EmptyState>
+            ) : (
+              <ul className="space-y-3">
+                {wallets.map(wallet => (
+                  <li key={wallet.currency} className="p-4 rounded-2xl bg-canvas border border-line">
+                    <h3 className="text-sm font-medium text-muted">{wallet.currency} wallet</h3>
+                    <p className={`font-display text-[28px] leading-tight tnum mt-0.5 ${wallet.balance < 0 ? 'text-spend' : 'text-ink'}`}>
+                      {formatMoney(wallet.balance, wallet.currency)}
+                    </p>
+                    <p className="text-xs text-faint mt-1 tnum">
+                      {wallet.rate > 0 && `≈ ${formatCurrency(wallet.balance / wallet.rate)} · ${formatMoney(wallet.rate, wallet.currency)} per $1 · `}
+                      {formatMoney(wallet.spent, wallet.currency)} spent
+                    </p>
+
+                    {wallet.exchanges.length > 0 && (
+                      <ul className="divide-y divide-line border-t border-line mt-3">
+                        {wallet.exchanges.map(ex => (
+                          <li key={ex.id} className="flex items-center justify-between gap-2 py-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-ink tnum truncate">
+                                {ex.foreignAmount > 0
+                                  ? `${formatCurrency(ex.usdAmount)} → ${formatMoney(ex.foreignAmount, ex.currency)}`
+                                  : `${formatMoney(-ex.foreignAmount, ex.currency)} → ${formatCurrency(-ex.usdAmount)}`}
+                              </p>
+                              <p className="text-xs text-faint mt-0.5">
+                                {ex.date}{ex.foreignAmount < 0 && ' · changed back'}
+                              </p>
+                            </div>
+                            <div className="-mr-2">
+                              <DeleteButton onConfirm={() => deleteExchange(ex.id)} label="Delete exchange" />
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
           </div>
 
           {/* Column 3: Expense Tracker */}
-          <div className="lg:col-span-1 space-y-6">
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full flex flex-col">
-              <div className="flex items-center gap-2 mb-6">
-                <TrendingDown className="w-5 h-5 text-red-500" />
-                <h2 className="font-bold text-lg text-slate-800">Expense Tracker</h2>
-              </div>
+          <section className={`${showOn('spending')} ${cardClass}`}>
+            <SectionHeader icon={Receipt} tone="bg-spend/10 text-spend" title="Spending">
+              {sortedExpenses.length > 0 && (
+                <span className="text-sm font-semibold text-spend tnum">{formatCurrency(totalExpenses)}</span>
+              )}
+            </SectionHeader>
 
-              <form onSubmit={addExpense} className="space-y-3 mb-6">
-                <input
-                  type="text"
-                  required
-                  placeholder="What did you spend on?"
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm"
-                  value={expenseDesc}
-                  onChange={(e) => setExpenseDesc(e.target.value)}
-                />
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    required
-                    placeholder="Amount"
-                    className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-red-500 outline-none text-sm"
-                    value={expenseAmount}
-                    onChange={(e) => setExpenseAmount(e.target.value)}
-                  />
-                  <button
-                    type="submit"
-                    disabled={isSyncing}
-                    className="px-4 py-2 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 transition-colors text-sm disabled:opacity-50"
-                  >
-                    Log
-                  </button>
-                </div>
-              </form>
-
-              <div className="flex-1 overflow-y-auto max-h-[500px] pr-2">
-                <div className="flex items-center gap-2 mb-3 text-slate-400 text-xs font-bold uppercase tracking-widest">
-                  <History className="w-3 h-3" />
-                  Recent History
-                </div>
-                {expenses.length === 0 && (
-                  <div className="text-center py-8 text-slate-400">
-                    <p className="text-sm">No expenses logged.</p>
-                  </div>
-                )}
-                <div className="space-y-2">
-                  {expenses.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map(expense => (
-                    <div key={expense.id} className="group flex justify-between items-center p-3 rounded-xl hover:bg-red-50 transition-all border border-transparent hover:border-red-100">
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-slate-700">{expense.description}</p>
-                        <p className="text-[10px] text-slate-400 uppercase tracking-tighter">{expense.date}</p>
-                      </div>
-                      <div className="text-right flex items-center gap-3">
-                        <span className="font-bold text-red-600">-{formatCurrency(expense.amount)}</span>
-                        <button
-                          onClick={() => deleteExpense(expense.id)}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-500 transition-all"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
+            <form onSubmit={addExpense} className="space-y-2 mb-6">
+              {expenseCurrencies.length > 1 && (
+                <div className="flex p-1 rounded-xl bg-sunken" role="group" aria-label="Pay from">
+                  {expenseCurrencies.map(code => (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => setExpenseCurrency(code)}
+                      aria-pressed={activeExpenseCurrency === code}
+                      className={`flex-1 h-9 rounded-lg text-sm font-semibold transition-colors ${activeExpenseCurrency === code ? 'bg-surface text-ink shadow-sm' : 'text-muted'}`}
+                    >
+                      {code === 'USD' ? 'USD' : `${code} wallet`}
+                    </button>
                   ))}
                 </div>
+              )}
+              <input
+                type="text"
+                required
+                placeholder="What did you spend on?"
+                aria-label="Expense description"
+                className={fieldClass}
+                value={expenseDesc}
+                onChange={(e) => setExpenseDesc(e.target.value)}
+              />
+              <div className="flex gap-2">
+                <MoneyInput
+                  required
+                  symbol={currencySymbol(activeExpenseCurrency)}
+                  aria-label="Expense amount"
+                  value={expenseAmount}
+                  onChange={(e) => setExpenseAmount(e.target.value)}
+                />
+                <button type="submit" disabled={isSyncing} className={primaryButtonClass}>
+                  Log
+                </button>
               </div>
-            </section>
-          </div>
+            </form>
 
+            {sortedExpenses.length === 0 ? (
+              <EmptyState>No expenses logged.</EmptyState>
+            ) : (
+              <ul className="divide-y divide-line lg:max-h-[560px] lg:overflow-y-auto overflow-x-hidden pr-2">
+                {sortedExpenses.map(expense => (
+                  <li key={expense.id} className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      <p className="text-[15px] font-medium text-ink truncate">{expense.description}</p>
+                      <p className="text-xs text-faint mt-0.5 tnum">
+                        {expense.date}
+                        {isForeign(expense) && toUsd(expense.amount, expense.currency) !== null &&
+                          ` · ≈ ${formatCurrency(toUsd(expense.amount, expense.currency))}`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 -mr-2">
+                      <span className={`text-[15px] font-semibold tnum ${isForeign(expense) ? 'text-travel' : 'text-spend'}`}>
+                        -{formatMoney(expense.amount, expense.currency || 'USD')}
+                      </span>
+                      <DeleteButton onConfirm={() => deleteExpense(expense.id)} label={`Delete expense ${expense.description}`} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </div>
 
-        {/* Footer with Backup/Restore */}
-        <footer className="text-center text-slate-400 text-sm py-8 space-y-4 border-t border-slate-200 mt-12 pt-8">
-          <div className="flex items-center justify-center gap-2">
-            <Cloud className="w-3 h-3" />
-            <span>Local Storage Active</span>
-          </div>
-          <p className="font-medium">
-            Data is saved to your browser's local storage.
-            If you clear cookies or switch devices, data will be lost unless you back it up.
+        {/* Data: report, backup, restore */}
+        <section className={`${showOn('home')} ${cardClass}`}>
+          <SectionHeader icon={ShieldCheck} tone="bg-sunken text-muted" title="Your data" />
+          <p className="text-sm text-muted -mt-2 mb-5 max-w-2xl">
+            Everything is stored in this browser only. Clearing site data or switching devices
+            will lose it, so keep a backup.
           </p>
 
-          <div className="flex flex-wrap justify-center gap-4">
-            <button
-              onClick={generateReport}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              Export PDF Report
-            </button>
-
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <button
               onClick={handleBackup}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-200 transition-colors"
+              className="h-12 px-4 flex items-center justify-center gap-2 rounded-xl bg-ink text-canvas text-sm font-semibold active:scale-[.98] transition-transform"
             >
               <Download className="w-4 h-4" />
-              Backup Data (JSON)
+              Back up data
             </button>
 
-            <div className="relative">
-              <input
-                type="file"
-                accept=".json"
-                onChange={handleRestore}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              />
-              <button
-                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-200 transition-colors pointer-events-none"
-              >
-                <RefreshCw className="w-4 h-4" />
-                Restore Backup
-              </button>
-            </div>
+            <label className="h-12 px-4 flex items-center justify-center gap-2 rounded-xl border border-line bg-surface text-ink text-sm font-semibold cursor-pointer active:scale-[.98] transition-transform focus-within:border-brand">
+              <Upload className="w-4 h-4" />
+              Restore backup
+              <input type="file" accept=".json" onChange={handleRestore} className="sr-only" />
+            </label>
+
+            <button
+              onClick={generateReport}
+              className="h-12 px-4 flex items-center justify-center gap-2 rounded-xl border border-line bg-surface text-ink text-sm font-semibold active:scale-[.98] transition-transform"
+            >
+              <FileText className="w-4 h-4" />
+              Export PDF report
+            </button>
           </div>
 
-          <div className="text-[10px] text-slate-300 max-w-md mx-auto">
-            <p>Note: Vercel Preview URLs (ending in .vercel.app) have separate storage from your main domain. Always use your production URL.</p>
-          </div>
-        </footer>
-      </div>
+          <p className="text-xs text-faint mt-4">
+            Vercel preview URLs (ending in .vercel.app) keep separate storage from your main domain. Always use your production URL.
+          </p>
+        </section>
+      </main>
+
+      {/* Toast */}
+      {toast && (
+        <div
+          role="status"
+          className="fixed z-40 left-1/2 -translate-x-1/2 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] lg:bottom-8 max-w-[calc(100vw-2rem)] px-4 py-3 rounded-2xl bg-ink text-canvas text-sm font-medium shadow-lg"
+        >
+          {toast}
+        </div>
+      )}
+
+      {/* Bottom tab bar (phones) */}
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-surface/90 backdrop-blur-md border-t border-line pb-[env(safe-area-inset-bottom)]">
+        <div className="grid grid-cols-4 max-w-md mx-auto">
+          {TABS.map(({ id, label, icon: Icon }) => {
+            const active = tab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => { setTab(id); window.scrollTo(0, 0); }}
+                aria-current={active ? 'page' : undefined}
+                className={`flex flex-col items-center gap-1 pt-2 pb-2 text-[11px] font-medium transition-colors ${active ? 'text-brand' : 'text-faint'}`}
+              >
+                <span className={`h-8 w-14 grid place-items-center rounded-full transition-colors ${active ? 'bg-brand/10' : ''}`}>
+                  <Icon className="w-5 h-5" />
+                </span>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 };
